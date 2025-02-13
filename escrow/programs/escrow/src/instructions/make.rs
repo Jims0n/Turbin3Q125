@@ -39,7 +39,7 @@ pub struct Make<'info> {
 }
 
 impl<'info> Make<'info> {
-    pub fn init_escrow_state(&mut self, seed: u64, receive_amount: u64, bumps: MakeBumps,) -> Result<()> {
+    pub fn make(&mut self, seed: u64, receive_amount: u64, bumps: MakeBumps,) -> Result<()> {
         self.escrow.set_inner(EscrowState {
             receive_amount,
             seed,
@@ -51,7 +51,7 @@ impl<'info> Make<'info> {
         Ok(())
     }
 
-    pub fn deposit(&mut self, amount: u64) -> Result<()> {
+    pub fn deposit(&mut self, deposit_amount: u64) -> Result<()> {
         let cpi_program = self.token_program.to_account_info();
         let cpi_accounts = TransferChecked {
             from: self.maker_mint_a_ata.to_account_info(),
@@ -60,7 +60,7 @@ impl<'info> Make<'info> {
             mint: self.mint_a.to_account_info(),
         };
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        transfer_checked(cpi_ctx, amount, self.mint_a.decimals)?;
+        transfer_checked(cpi_ctx, deposit_amount, self.mint_a.decimals)?;
         Ok(())
     }
         

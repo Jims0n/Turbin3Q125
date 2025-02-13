@@ -12,7 +12,7 @@ pub mod escrow {
     use super::*;
 
     pub fn make(ctx: Context<Make>, seed: u64, receive_amount: u64, deposit_amount: u64,) -> Result<()> {
-       ctx.accounts.init_escrow_state(seed, receive_amount, ctx.bumps)?;
+       ctx.accounts.make(seed, receive_amount, ctx.bumps)?;
        ctx.accounts.deposit(deposit_amount)?;
         Ok(())
     }
