@@ -1,17 +1,13 @@
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token::{
-        create_initialize_mint_account, mint_to, CreateInitializeMintAccount, Mint, MintTo, Token,
-        TokenAccount,
-    },
-};
-use mpl_token_metadata::{
-    instruction::create_metadata_accounts_v3,
-    state::{Collection, Creator, DataV2},
+    token::{Mint, MintTo, Token, TokenAccount},
 };
 
-use crate::state::Event;
+use crate::{
+    errors::ErrorCode,
+    state::{Event, TicketTier, Whitelist},
+};
 
 #[derive(Accounts)]
 #[instruction(tier_index: u8)]
@@ -19,6 +15,11 @@ pub struct MintTicket<'info> {
     // Event accounts
     #[account(mut)]
     pub event: Account<'info, Event>,
+    #[account(
+        seeds = [b"whitelist", event.key().as_ref()],
+        bump = event.whitelist_bump
+    )]
+    pub whitelist: Account<'info, Whitelist>,
 
     // Buyer accounts
     #[account(mut)]
@@ -61,166 +62,116 @@ pub struct MintTicket<'info> {
 
 impl<'info> MintTicket<'info> {
     pub fn mint_ticket(&mut self, tier_index: u8) -> Result<()> {
-        let event = &mut self.event;
-        let tier = &event.tiers[tier_index as usize];
+        // Get whitelist discount first
+        let discount = self.get_whitelist_discount(tier_index)?;
 
-        // Validate payment
-        let ticket_price = tier
-            .price
-            .checked_sub(get_whitelist_discount(&self.buyer.key(), tier_index, event))
-            .ok_or(ErrorCode::InsufficientFunds)?;
+        // Calculate price and validate tier
+        let tier_price = self.event.tiers[tier_index as usize].price;
+        let ticket_price = tier_price
+            .checked_sub(discount)
+            .ok_or(ProgramError::from(ProgramError::ArithmeticOverflow))?;
 
-        transfer_payment(
-            ticket_price,
-            &self.buyer,
-            &self.organizer,
-            &self.system_program,
-        )?;
+        // Check if first mint for this tier
+        let is_first_mint = self.event.tiers[tier_index as usize].minted == 0;
 
-        // Initialize mint if first ticket of tier
-        if tier.minted == 0 {
-            initialize_mint_account(&ctx)?;
+        // Process payment
+        self.transfer_payment(ticket_price)?;
+
+        // Initialize mint if first ticket
+        if is_first_mint {
+            self.initialize_mint()?;
         }
 
-        // Mint ticket to buyer
-        mint_nft_token(
-            &self.ticket_mint,
-            &self.buyer_ata,
-            &self.event.organizer,
-            &self.token_program,
-        )?;
+        // Mint the NFT
+        self.mint_nft_token()?;
 
-        // Create metadata account if first ticket of event
-        if tier.minted == 0 {
-            create_nft_metadata(
-                &self.ticket_mint,
-                &self.metadata_account,
-                &self.event.organizer,
-                &self.token_metadata_program,
-                tier,
-            )?;
+        // Create metadata if first ticket
+        if is_first_mint {
+            let tier = &self.event.tiers[tier_index as usize];
+            self.create_nft_metadata(tier)?;
         }
 
-        // Update ticket count
-        tier.minted += 1;
-        event.total_tickets += 1;
+        // Update count
+        let current_minted = self.event.tiers[tier_index as usize].minted;
+        self.event.tiers[tier_index as usize].minted = current_minted
+            .checked_add(1)
+            .ok_or(ProgramError::from(ProgramError::ArithmeticOverflow))?;
 
         Ok(())
     }
 
-    fn get_whitelist_discount(fan_wallet: &Pubkey, tier_index: u8, event: &Event) -> Result<u64> {
-        let whitelist = Whitelist::get(&event.key());
-        let entry = whitelist
+    fn get_whitelist_discount(&self, tier_index: u8) -> Result<u64> {
+        let buyer_key = self.buyer.key();
+        self.whitelist
             .fans
             .iter()
-            .find(|entry| entry.wallet == *fan_wallet && entry.tier_index == tier_index)
-            .ok_or(ErrorCode::NotWhitelisted)?;
-
-        Ok(entry.discount)
+            .find(|entry| entry.wallet == buyer_key && entry.tier_index == tier_index)
+            .map(|entry| entry.discount)
+            .ok_or(error!(ErrorCode::NotWhitelisted))
     }
 
-    fn transfer_payment(
-        amount: u64,
-        buyer: &Signer<'info>,
-        organizer: &SystemAccount<'info>,
-        system_program: &Program<'info, System>,
-    ) -> Result<()> {
-        let cpi_accounts = Transfer {
-            from: buyer.to_account_info(),
-            to: organizer.to_account_info(),
-            authority: buyer.to_account_info(),
-        };
+    fn transfer_payment(&self, amount: u64) -> Result<()> {
+        let from = self.buyer.key();
+        let to = self.organizer.key();
 
-        let cpi_program = system_program.clone();
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        system_program.transfer(cpi_ctx, amount)?;
+        let ix = anchor_lang::solana_program::system_instruction::transfer(&from, &to, amount);
+
+        anchor_lang::solana_program::program::invoke(
+            &ix,
+            &[
+                self.buyer.to_account_info(),
+                self.organizer.to_account_info(),
+                self.system_program.to_account_info(),
+            ],
+        )
+        .map_err(|_| error!(ErrorCode::InsufficientFunds))?;
 
         Ok(())
     }
 
-    fn initialize_mint_account(ctx: &Context<MintTicket>) -> Result<()> {
-        let cpi_accounts = CreateInitializeMintAccount {
-            mint: ctx.accounts.ticket_mint.to_account_info(),
-            rent: ctx.accounts.rent.to_account_info(),
-            mint_authority: ctx.accounts.event.organizer.to_account_info(),
-            payer: ctx.accounts.buyer.to_account_info(),
-            system_program: ctx.accounts.system_program.to_account_info(),
-        };
-
-        let cpi_program = ctx.accounts.token_program.clone();
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        create_initialize_mint_account(cpi_ctx, 0)?;
-
+    fn initialize_mint(&self) -> Result<()> {
+        anchor_spl::token::initialize_mint(
+            CpiContext::new(
+                self.token_program.to_account_info(),
+                anchor_spl::token::InitializeMint {
+                    mint: self.ticket_mint.to_account_info(),
+                    rent: self.rent.to_account_info(),
+                },
+            ),
+            0,
+            &self.event.organizer,
+            Some(&self.event.organizer),
+        )?;
         Ok(())
     }
 
-    fn mint_nft_token(
-        ticket_mint: &AccountInfo<'info>,
-        buyer_ata: &AccountInfo<'info>,
-        organizer: &SystemAccount<'info>,
-        token_program: &Program<'info, Token>,
-    ) -> Result<()> {
+    fn mint_nft_token(&self) -> Result<()> {
         let cpi_accounts = MintTo {
-            mint: ticket_mint.to_account_info(),
-            to: buyer_ata.to_account_info(),
-            authority: organizer.to_account_info(),
+            mint: self.ticket_mint.to_account_info(),
+            to: self.buyer_ata.to_account_info(),
+            authority: self.event.to_account_info(),
         };
 
         let seeds = &[
-            b"ticket_mint",
-            ticket_mint.key.as_ref(),
-            organizer.key.as_ref(),
+            b"event",
+            self.event.event_id.as_bytes(),
+            &[self.event.whitelist_bump],
         ];
-
         let signer_seeds = &[&seeds[..]];
 
-        let cpi_program = token_program.clone();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-        mint_to(cpi_ctx, 1)?;
+        let cpi_ctx = CpiContext::new_with_signer(
+            self.token_program.to_account_info(),
+            cpi_accounts,
+            signer_seeds,
+        );
+
+        anchor_spl::token::mint_to(cpi_ctx, 1)?;
 
         Ok(())
     }
 
-    fn create_nft_metadata(
-        ticket_mint: &AccountInfo<'info>,
-        metadata_account: &AccountInfo<'info>,
-        organizer: &SystemAccount<'info>,
-        token_metadata_program: &UncheckedAccount<'info>,
-        tier: &TicketTier,
-    ) -> Result<()> {
-        let cpi_accounts = create_metadata_accounts_v3::CreateMetadataAccountsV3 {
-            data: metadata_account.to_account_info(),
-            mint: ticket_mint.to_account_info(),
-            mint_authority: organizer.to_account_info(),
-            payer: organizer.to_account_info(),
-            system_program: token_metadata_program.to_account_info(),
-            rent: ctx.accounts.rent.to_account_info(),
-        };
-
-        let cpi_program = token_metadata_program.clone();
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        create_metadata_accounts_v3(
-            cpi_ctx,
-            DataV2 {
-                name: format!("{} Ticket", tier.name),
-                symbol: format!("{}T", tier.name),
-                uri: format!("{}ticket", tier.name),
-                creators: vec![Creator {
-                    address: organizer.key(),
-                    share: 100,
-                }],
-                royalty: None,
-                files: vec![],
-                animation_url: None,
-                properties: None,
-                collection: Collection {
-                    name: "Ticket Collection".to_string(),
-                    family: "Ticket".to_string(),
-                    prefix: "T".to_string(),
-                },
-            },
-        )?;
-
+    fn create_nft_metadata(&self, _tier: &TicketTier) -> Result<()> {
+        // TODO: Implement metadata creation when mpl-token-metadata is properly set up
         Ok(())
     }
 }

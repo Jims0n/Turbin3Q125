@@ -1,5 +1,5 @@
+use crate::state::{Event, TicketTier, Whitelist};
 use anchor_lang::prelude::*;
-use crate::state::{Event, Whitelist};
 
 #[derive(Accounts)]
 #[instruction(event_id: String, tiers: Vec<TicketTier>)]
@@ -28,20 +28,21 @@ pub struct CreateEvent<'info> {
 impl<'info> CreateEvent<'info> {
     pub fn create_event(
         &mut self,
+        ctx: &Context<CreateEvent<'info>>,
         event_id: String,
-        ticket_price: u64,
+        tiers: Vec<TicketTier>,
     ) -> Result<()> {
         let event = &mut self.event;
         event.tiers = tiers;
         event.organizer = *self.organizer.key;
-        event.event_id = event_id;
-        event.ticket_price = ticket_price;
-        event.whitelist_bump = self.bumps.get("whitelist").unwrap();
+        event.event_id = event_id.clone();
+        event.whitelist_bump = ctx.bumps.whitelist;
 
+        // Initialize the whitelist
         let whitelist = &mut self.whitelist;
         whitelist.event_id = event_id;
+        whitelist.fans = vec![];
 
         Ok(())
-        
     }
 }
