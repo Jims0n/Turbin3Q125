@@ -22,7 +22,7 @@ pub struct AddToWhitelist<'info> {
 
     // Whitelist PDA
     #[account(
-        init_if_needed,
+        init,
         payer = organizer,
         space = 8 + 4 + (32 + 1 + 8) * 100, // Space for 100 entries
         seeds = [b"whitelist", event.key().as_ref()],

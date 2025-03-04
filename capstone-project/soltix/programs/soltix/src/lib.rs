@@ -1,14 +1,13 @@
-use anchor_lang::prelude::*;
-
 pub mod contexts;
 pub mod errors;
 pub mod state;
 
-use crate::errors::ErrorCode;
-use crate::state::TicketTier;
 pub use contexts::*;
+pub use state::*;
 
-declare_id!("EC6EYasZhZq8zwRL3QkkgfvuhshevQMhQSmQkTj6RpHh");
+use anchor_lang::prelude::*;
+
+declare_id!("FNfJk8nYykTmKMAfyr2zjSqtrfWNR28rWVF5n2aEJYhU");
 
 #[program]
 pub mod soltix {
@@ -20,7 +19,7 @@ pub mod soltix {
         event_id: String,
         tiers: Vec<TicketTier>,
     ) -> Result<()> {
-        ctx.accounts.create_event(&ctx, event_id, tiers)
+        ctx.accounts.create_event(event_id, tiers, &ctx.bumps)
     }
 
     pub fn add_to_whitelist(

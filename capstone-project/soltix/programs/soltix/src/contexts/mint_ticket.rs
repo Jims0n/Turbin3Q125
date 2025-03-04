@@ -69,7 +69,7 @@ impl<'info> MintTicket<'info> {
         let tier_price = self.event.tiers[tier_index as usize].price;
         let ticket_price = tier_price
             .checked_sub(discount)
-            .ok_or(ProgramError::from(ProgramError::ArithmeticOverflow))?;
+            .ok_or(error!(ErrorCode::ArithmeticOverflow))?;
 
         // Check if first mint for this tier
         let is_first_mint = self.event.tiers[tier_index as usize].minted == 0;
@@ -95,7 +95,7 @@ impl<'info> MintTicket<'info> {
         let current_minted = self.event.tiers[tier_index as usize].minted;
         self.event.tiers[tier_index as usize].minted = current_minted
             .checked_add(1)
-            .ok_or(ProgramError::from(ProgramError::ArithmeticOverflow))?;
+            .ok_or(error!(ErrorCode::ArithmeticOverflow))?;
 
         Ok(())
     }

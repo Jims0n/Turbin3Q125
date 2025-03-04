@@ -14,10 +14,9 @@ cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-idl-build = ["anchor-lang/idl-build"]
+
 
 [dependencies]
-anchor-lang = { version = "0.30.0", features = ["init-if-needed"] }
-anchor-spl = "0.30.0"
-mpl-token-metadata = { git = "https://github.com/metaplex-foundation/mpl-token-metadata"}
-solana-program = "=2.0.25"
+anchor-lang = "0.26.0"
+anchor-spl = "0.26.0"
+solana-program = "1.14.17"

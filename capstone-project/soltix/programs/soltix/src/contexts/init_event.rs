@@ -28,15 +28,15 @@ pub struct CreateEvent<'info> {
 impl<'info> CreateEvent<'info> {
     pub fn create_event(
         &mut self,
-        ctx: &Context<CreateEvent<'info>>,
         event_id: String,
         tiers: Vec<TicketTier>,
+        bumps: &std::collections::BTreeMap<String, u8>,
     ) -> Result<()> {
         let event = &mut self.event;
         event.tiers = tiers;
         event.organizer = *self.organizer.key;
         event.event_id = event_id.clone();
-        event.whitelist_bump = ctx.bumps.whitelist;
+        event.whitelist_bump = bumps.get("whitelist").copied().unwrap_or(0);
 
         // Initialize the whitelist
         let whitelist = &mut self.whitelist;
