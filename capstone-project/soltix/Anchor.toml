@@ -7,7 +7,10 @@ skip-lint = false
 seeds = false
 
 [programs.devnet]
-soltix = "FNfJk8nYykTmKMAfyr2zjSqtrfWNR28rWVF5n2aEJYhU"
+soltix = "AY7npdHaC7Sx4tfbKhbw4NHsLasz8Qm4E8h9H4GvVYy6"
+
+[programs.localnet]
+soltix = "AY7npdHaC7Sx4tfbKhbw4NHsLasz8Qm4E8h9H4GvVYy6"
 
 [registry]
 url = "https://api.apr.dev"

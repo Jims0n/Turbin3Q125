@@ -6,7 +6,7 @@ use anchor_spl::{
 
 use crate::{
     errors::ErrorCode,
-    state::{Event, TicketTier, Whitelist},
+    state::{Event, Whitelist},
 };
 
 #[derive(Accounts)]
@@ -24,23 +24,26 @@ pub struct MintTicket<'info> {
     // Buyer accounts
     #[account(mut)]
     pub buyer: Signer<'info>,
-    #[account(
-        mut,
-        associated_token::mint = ticket_mint,
-        associated_token::authority = buyer
-    )]
-    pub buyer_ata: Account<'info, TokenAccount>,
 
-    // Mint accounts
+    // Mint accounts - initialize if it's the first mint for this tier
     #[account(
         init,
         payer = buyer,
         mint::decimals = 0,
-        mint::authority = event.organizer,
+        mint::authority = organizer,
         seeds = [b"ticket_mint", event.key().as_ref(), &[tier_index]],
         bump,
     )]
     pub ticket_mint: Account<'info, Mint>,
+
+    // Initialize the associated token account if it doesn't exist
+    #[account(
+        init_if_needed,
+        payer = buyer,
+        associated_token::mint = ticket_mint,
+        associated_token::authority = buyer
+    )]
+    pub buyer_ata: Account<'info, TokenAccount>,
 
     // Metadata account
     /// CHECK: Verified through CPI
@@ -62,8 +65,16 @@ pub struct MintTicket<'info> {
 
 impl<'info> MintTicket<'info> {
     pub fn mint_ticket(&mut self, tier_index: u8) -> Result<()> {
-        // Get whitelist discount first
-        let discount = self.get_whitelist_discount(tier_index)?;
+        // Verify tier_index is valid
+        if tier_index as usize >= self.event.tiers.len() {
+            return Err(ErrorCode::InvalidTier.into());
+        }
+
+        // Try to get whitelist discount, default to 0 if not whitelisted
+        let discount = match self.get_whitelist_discount(tier_index) {
+            Ok(discount) => discount,
+            Err(_) => 0, // Not whitelisted, no discount
+        };
 
         // Calculate price and validate tier
         let tier_price = self.event.tiers[tier_index as usize].price;
@@ -71,25 +82,17 @@ impl<'info> MintTicket<'info> {
             .checked_sub(discount)
             .ok_or(error!(ErrorCode::ArithmeticOverflow))?;
 
-        // Check if first mint for this tier
-        let is_first_mint = self.event.tiers[tier_index as usize].minted == 0;
+        // Check if max supply is reached
+        let tier = &self.event.tiers[tier_index as usize];
+        if tier.max_supply > 0 && tier.minted >= tier.max_supply {
+            return Err(ErrorCode::SoldOut.into());
+        }
 
         // Process payment
         self.transfer_payment(ticket_price)?;
 
-        // Initialize mint if first ticket
-        if is_first_mint {
-            self.initialize_mint()?;
-        }
-
-        // Mint the NFT
+        // Mint the NFT token
         self.mint_nft_token()?;
-
-        // Create metadata if first ticket
-        if is_first_mint {
-            let tier = &self.event.tiers[tier_index as usize];
-            self.create_nft_metadata(tier)?;
-        }
 
         // Update count
         let current_minted = self.event.tiers[tier_index as usize].minted;
@@ -97,17 +100,22 @@ impl<'info> MintTicket<'info> {
             .checked_add(1)
             .ok_or(error!(ErrorCode::ArithmeticOverflow))?;
 
+        msg!("Successfully minted ticket for tier {}", tier_index);
         Ok(())
     }
 
     fn get_whitelist_discount(&self, tier_index: u8) -> Result<u64> {
         let buyer_key = self.buyer.key();
-        self.whitelist
+        let entry = self
+            .whitelist
             .fans
             .iter()
-            .find(|entry| entry.wallet == buyer_key && entry.tier_index == tier_index)
-            .map(|entry| entry.discount)
-            .ok_or(error!(ErrorCode::NotWhitelisted))
+            .find(|entry| entry.wallet == buyer_key && entry.tier_index == tier_index);
+
+        match entry {
+            Some(entry) => Ok(entry.discount),
+            None => Err(ErrorCode::NotWhitelisted.into()),
+        }
     }
 
     fn transfer_payment(&self, amount: u64) -> Result<()> {
@@ -126,22 +134,7 @@ impl<'info> MintTicket<'info> {
         )
         .map_err(|_| error!(ErrorCode::InsufficientFunds))?;
 
-        Ok(())
-    }
-
-    fn initialize_mint(&self) -> Result<()> {
-        anchor_spl::token::initialize_mint(
-            CpiContext::new(
-                self.token_program.to_account_info(),
-                anchor_spl::token::InitializeMint {
-                    mint: self.ticket_mint.to_account_info(),
-                    rent: self.rent.to_account_info(),
-                },
-            ),
-            0,
-            &self.event.organizer,
-            Some(&self.event.organizer),
-        )?;
+        msg!("Payment of {} lamports transferred to organizer", amount);
         Ok(())
     }
 
@@ -149,29 +142,14 @@ impl<'info> MintTicket<'info> {
         let cpi_accounts = MintTo {
             mint: self.ticket_mint.to_account_info(),
             to: self.buyer_ata.to_account_info(),
-            authority: self.event.to_account_info(),
+            authority: self.organizer.to_account_info(),
         };
 
-        let seeds = &[
-            b"event",
-            self.event.event_id.as_bytes(),
-            &[self.event.whitelist_bump],
-        ];
-        let signer_seeds = &[&seeds[..]];
-
-        let cpi_ctx = CpiContext::new_with_signer(
-            self.token_program.to_account_info(),
-            cpi_accounts,
-            signer_seeds,
-        );
+        let cpi_ctx = CpiContext::new(self.token_program.to_account_info(), cpi_accounts);
 
         anchor_spl::token::mint_to(cpi_ctx, 1)?;
+        msg!("Minted NFT token to buyer");
 
-        Ok(())
-    }
-
-    fn create_nft_metadata(&self, _tier: &TicketTier) -> Result<()> {
-        // TODO: Implement metadata creation when mpl-token-metadata is properly set up
         Ok(())
     }
 }

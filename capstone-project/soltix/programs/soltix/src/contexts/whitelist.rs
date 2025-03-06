@@ -20,13 +20,11 @@ pub struct AddToWhitelist<'info> {
     )]
     pub event: Account<'info, Event>,
 
-    // Whitelist PDA
+    // Whitelist PDA - already initialized in CreateEvent
     #[account(
-        init,
-        payer = organizer,
-        space = 8 + 4 + (32 + 1 + 8) * 100, // Space for 100 entries
+        mut,
         seeds = [b"whitelist", event.key().as_ref()],
-        bump,
+        bump = event.whitelist_bump,
     )]
     pub whitelist: Account<'info, Whitelist>,
 
@@ -41,16 +39,23 @@ impl<'info> AddToWhitelist<'info> {
         tier_index: u8,
         discount: u64,
     ) -> Result<()> {
-        //Check for duplicate entries
-        require!(
-            !self
-                .whitelist
-                .fans
-                .iter()
-                .any(|entry| entry.wallet == fan_wallet),
-            ErrorCode::DuplicateWhitelistEntry
-        );
+        // Check for duplicate entries
+        let duplicate = self
+            .whitelist
+            .fans
+            .iter()
+            .any(|entry| entry.wallet == fan_wallet && entry.tier_index == tier_index);
 
+        if duplicate {
+            return Err(ErrorCode::DuplicateWhitelistEntry.into());
+        }
+
+        // Verify tier_index is valid
+        if tier_index as usize >= self.event.tiers.len() {
+            return Err(ErrorCode::InvalidTier.into());
+        }
+
+        // Add the entry to the whitelist
         let whitelist = &mut self.whitelist;
         let entry = WhitelistEntry {
             wallet: fan_wallet,
@@ -58,6 +63,14 @@ impl<'info> AddToWhitelist<'info> {
             discount,
         };
         whitelist.fans.push(entry);
+
+        msg!(
+            "Added wallet {} to whitelist for tier {} with discount {}",
+            fan_wallet.to_string(),
+            tier_index,
+            discount
+        );
+
         Ok(())
     }
 }

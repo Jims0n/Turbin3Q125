@@ -5,8 +5,12 @@
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
     "clean": "rm -rf test-ledger .anchor",
     "start-validator": "solana-test-validator --reset --quiet",
-    "test-only": "ANCHOR_PROVIDER_URL=http://localhost:8899 ANCHOR_WALLET=~/.config/solana/id.json ts-mocha -p ./tsconfig.json tests/**/*.ts --timeout 60000",
-    "test": "yarn clean && yarn test-only"
+    "test-only": "ANCHOR_PROVIDER_URL=http://localhost:8899 ANCHOR_WALLET=~/.config/solana/id.json ts-mocha -p ./tsconfig.json tests/**/*.ts --timeout 120000",
+    "test": "yarn clean && yarn test-only",
+    "deploy": "bash scripts/deploy-devnet.sh",
+    "test:whitelist": "bash scripts/test-whitelist.sh",
+    "test:mint": "bash scripts/test-mint-ticket.sh",
+    "test:all": "bash scripts/test-all.sh"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.26.0",

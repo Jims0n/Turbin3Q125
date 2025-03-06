@@ -7,7 +7,7 @@ pub use state::*;
 
 use anchor_lang::prelude::*;
 
-declare_id!("FNfJk8nYykTmKMAfyr2zjSqtrfWNR28rWVF5n2aEJYhU");
+declare_id!("AY7npdHaC7Sx4tfbKhbw4NHsLasz8Qm4E8h9H4GvVYy6");
 
 #[program]
 pub mod soltix {
